@@ -18,6 +18,30 @@ const STYLES = [
   { id: 'noir', label: 'Film Noir', icon: '🕵️' },
 ];
 
+const DIFFICULTIES = [
+  { 
+    label: '3x3', 
+    value: 3, 
+    desc: 'Easy', 
+    activeClass: 'bg-emerald-600 border-emerald-500 shadow-emerald-500/30 ring-emerald-400/50',
+    iconClass: 'text-emerald-200'
+  },
+  { 
+    label: '4x4', 
+    value: 4, 
+    desc: 'Normal', 
+    activeClass: 'bg-indigo-600 border-indigo-500 shadow-indigo-500/30 ring-indigo-400/50',
+    iconClass: 'text-indigo-200'
+  },
+  { 
+    label: '5x5', 
+    value: 5, 
+    desc: 'Hard', 
+    activeClass: 'bg-rose-600 border-rose-500 shadow-rose-500/30 ring-rose-400/50',
+    iconClass: 'text-rose-200'
+  }
+];
+
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>({
     status: 'idle',
@@ -207,7 +231,10 @@ const App: React.FC = () => {
           moves: prev.moves + 1,
           timestamp: Date.now(),
         };
-        setHistory(h => [newItem, ...h.slice(0, 19)]);
+        setHistory(h => {
+          // Keep only one entry per prompt if you prefer, but here we just store top 20
+          return [newItem, ...h.slice(0, 19)];
+        });
       }
 
       return {
@@ -250,6 +277,21 @@ const App: React.FC = () => {
     audioService.playSwap();
   };
 
+  const handleReplay = (item: HistoryItem) => {
+    audioService.playClick();
+    setPrompt(item.prompt);
+    const newTiles = generateTiles(item.image, item.difficulty);
+    setGameState({
+      status: 'playing',
+      image: item.image,
+      tiles: newTiles,
+      timer: 0,
+      difficulty: item.difficulty,
+      moves: 0,
+      moveHistory: [],
+    });
+  };
+
   useEffect(() => {
     if (gameState.status === 'playing') {
       timerRef.current = window.setInterval(() => {
@@ -277,11 +319,11 @@ const App: React.FC = () => {
     setSelectedStyle('default');
   };
 
-  const difficulties = [
-    { label: '3x3', value: 3, desc: 'Easy' },
-    { label: '4x4', value: 4, desc: 'Normal' },
-    { label: '5x5', value: 5, desc: 'Hard' }
-  ];
+  const formatTime = (s: number) => {
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const isSolved = gameState.status === 'solved';
 
@@ -304,7 +346,12 @@ const App: React.FC = () => {
             <Timer seconds={gameState.timer} />
             <div className="bg-slate-800/80 px-5 py-2 rounded-xl border border-slate-700 shadow-xl backdrop-blur-sm">
                <span className="text-slate-500 text-[10px] font-black uppercase mr-2 tracking-widest">Moves</span>
-               <span className="text-2xl font-mono text-indigo-300">{gameState.moves}</span>
+               <span 
+                 key={gameState.moves} 
+                 className="text-2xl font-mono text-indigo-300 inline-block animate-counter-pop"
+               >
+                 {gameState.moves}
+               </span>
             </div>
             {gameState.status === 'playing' && gameState.moveHistory.length > 0 && (
               <Button 
@@ -324,98 +371,177 @@ const App: React.FC = () => {
 
       <main className="w-full max-w-7xl flex flex-col items-center gap-10">
         {gameState.status === 'idle' ? (
-          <div className="w-full max-w-xl bg-slate-800/50 p-10 rounded-[2.5rem] border border-slate-700/50 shadow-2xl backdrop-blur-md animate-in zoom-in-95 duration-500">
-            <h2 className="text-3xl font-black mb-8 text-center tracking-tight">Craft Your Vision</h2>
-            
-            <div className="space-y-8">
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Dream with AI</label>
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Describe an image to scramble..."
-                  className="w-full h-24 bg-slate-900/80 border border-slate-700 rounded-2xl p-5 focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none placeholder:text-slate-600 text-lg"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Choose Style</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {STYLES.map((s) => (
-                    <button
-                      key={s.id}
-                      onClick={() => setSelectedStyle(s.id)}
-                      className={`flex flex-col items-center py-2 px-1 rounded-xl border transition-all duration-200 ${
-                        selectedStyle === s.id
-                          ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
-                          : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-600'
-                      }`}
-                    >
-                      <span className="text-xl mb-1">{s.icon}</span>
-                      <span className="text-[9px] font-black uppercase tracking-tighter truncate w-full text-center">
-                        {s.label}
-                      </span>
-                    </button>
-                  ))}
+          <div className="w-full flex flex-col xl:flex-row gap-10 items-start">
+            {/* Left Panel: Creator */}
+            <div className="w-full max-w-xl bg-slate-800/50 p-10 rounded-[2.5rem] border border-slate-700/50 shadow-2xl backdrop-blur-md animate-in zoom-in-95 duration-500">
+              <h2 className="text-3xl font-black mb-8 text-center tracking-tight">Craft Your Vision</h2>
+              
+              <div className="space-y-8">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Dream with AI</label>
+                  <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Describe an image to scramble..."
+                    className="w-full h-24 bg-slate-900/80 border border-slate-700 rounded-2xl p-5 focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none placeholder:text-slate-600 text-lg"
+                  />
                 </div>
-              </div>
 
-              <div className="relative group">
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Or Upload Your Own</label>
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  className="hidden" 
-                  accept="image/*"
-                  onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
-                />
-                <div 
-                  onDragOver={onDragOver}
-                  onDragLeave={onDragLeave}
-                  onDrop={onDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`w-full py-6 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-all duration-300 group ${
-                    isDragging 
-                    ? 'border-indigo-400 bg-indigo-500/10 scale-[1.01]' 
-                    : 'border-slate-700 bg-slate-900/40 hover:border-slate-500 hover:bg-slate-900/60'
-                  }`}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Choose Style</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {STYLES.map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => setSelectedStyle(s.id)}
+                        className={`flex flex-col items-center py-2 px-1 rounded-xl border transition-all duration-200 ${
+                          selectedStyle === s.id
+                            ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
+                            : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-600'
+                        }`}
+                      >
+                        <span className="text-xl mb-1">{s.icon}</span>
+                        <span className="text-[9px] font-black uppercase tracking-tighter truncate w-full text-center">
+                          {s.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="relative group">
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Or Upload Your Own</label>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    accept="image/*"
+                    onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+                  />
+                  <div 
+                    onDragOver={onDragOver}
+                    onDragLeave={onDragLeave}
+                    onDrop={onDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`w-full py-6 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-all duration-300 group ${
+                      isDragging 
+                      ? 'border-indigo-400 bg-indigo-500/10 scale-[1.01]' 
+                      : 'border-slate-700 bg-slate-900/40 hover:border-slate-500 hover:bg-slate-900/60'
+                    }`}
+                  >
+                    <p className="text-sm font-bold text-slate-400 group-hover:text-slate-200">
+                      {isDragging ? 'Drop Image Here' : 'Click or Drag Image to Upload'}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Select Complexity</label>
+                  <div className="grid grid-cols-3 gap-4">
+                    {DIFFICULTIES.map((d) => {
+                      const isSelected = selectedDifficulty === d.value;
+                      return (
+                        <button
+                          key={d.value}
+                          onClick={() => {
+                            setSelectedDifficulty(d.value);
+                            audioService.playClick();
+                          }}
+                          className={`relative flex flex-col items-center py-5 px-4 rounded-3xl border-2 transition-all duration-500 ${
+                            isSelected
+                              ? `${d.activeClass} text-white shadow-[0_15px_30px_-5px_rgba(0,0,0,0.4)] ring-4 -translate-y-2`
+                              : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:bg-slate-800'
+                          }`}
+                        >
+                          {isSelected && (
+                            <div className="absolute top-2 right-2 animate-in zoom-in-0 duration-300">
+                              <svg className={`w-5 h-5 ${d.iconClass}`} fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                            </div>
+                          )}
+                          <span className="text-2xl font-black mb-1">{d.label}</span>
+                          <span className={`text-[10px] uppercase font-black tracking-widest ${isSelected ? 'opacity-90' : 'text-slate-600'}`}>
+                            {d.desc}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <Button 
+                  className="w-full h-16 text-xl rounded-2xl font-black uppercase tracking-widest" 
+                  onClick={startGame} 
+                  isLoading={isLoading}
+                  disabled={!prompt.trim()}
                 >
-                  <p className="text-sm font-bold text-slate-400 group-hover:text-slate-200">
-                    {isDragging ? 'Drop Image Here' : 'Click or Drag Image to Upload'}
-                  </p>
-                </div>
+                  Assemble Puzzle
+                </Button>
               </div>
+            </div>
 
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Select Grid Density</label>
-                <div className="grid grid-cols-3 gap-4">
-                  {difficulties.map((d) => (
-                    <button
-                      key={d.value}
-                      onClick={() => setSelectedDifficulty(d.value)}
-                      className={`flex flex-col items-center py-4 px-4 rounded-2xl border transition-all duration-300 ${
-                        selectedDifficulty === d.value
-                          ? 'bg-indigo-600 border-indigo-500 text-white shadow-xl shadow-indigo-600/30 -translate-y-1'
-                          : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:bg-slate-800'
-                      }`}
-                    >
-                      <span className="text-xl font-black">{d.label}</span>
-                      <span className={`text-[10px] uppercase font-black tracking-widest mt-1 ${selectedDifficulty === d.value ? 'text-indigo-200' : 'text-slate-600'}`}>
-                        {d.desc}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <Button 
-                className="w-full h-16 text-xl rounded-2xl font-black uppercase tracking-widest" 
-                onClick={startGame} 
-                isLoading={isLoading}
-                disabled={!prompt.trim()}
-              >
-                Assemble Puzzle
-              </Button>
+            {/* Right Panel: Vault */}
+            <div className="flex-1 w-full xl:max-w-md">
+               <div className="bg-slate-800/30 rounded-[2.5rem] border border-slate-700/50 p-8 h-full min-h-[500px]">
+                  <h3 className="text-xl font-black mb-6 flex items-center gap-3">
+                    <span className="bg-indigo-500/20 text-indigo-400 p-2 rounded-lg">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                      </svg>
+                    </span>
+                    Puzzle Vault
+                  </h3>
+                  
+                  {history.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-64 text-slate-600 opacity-50 text-center">
+                       <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0a2 2 0 01-2 2H6a2 2 0 01-2-2m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5" />
+                       </svg>
+                       <p className="text-sm font-bold uppercase tracking-widest">Your collection is empty</p>
+                       <p className="text-xs mt-2">Complete a puzzle to save it here</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-4 overflow-y-auto max-h-[800px] pr-2 scrollbar-thin scrollbar-thumb-slate-700">
+                      {history.map(item => (
+                        <div key={item.id} className="group relative bg-slate-900/60 rounded-3xl p-4 border border-slate-700/50 transition-all duration-300 hover:border-indigo-500/50 hover:bg-slate-900 hover:-translate-y-1">
+                          <div className="flex gap-4">
+                            <div className="relative w-24 h-24 flex-shrink-0">
+                               <img src={item.image} className="w-full h-full object-cover rounded-2xl shadow-lg border border-white/5" alt="prev-puzzle" />
+                               <div className="absolute top-1 right-1 bg-indigo-600 text-[9px] font-black px-1.5 py-0.5 rounded-md shadow-lg">
+                                  {item.difficulty}x{item.difficulty}
+                               </div>
+                            </div>
+                            <div className="flex-1 flex flex-col justify-between py-1">
+                               <div>
+                                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 truncate max-w-[150px]">
+                                   {item.prompt}
+                                 </p>
+                                 <div className="flex gap-3 text-xs">
+                                   <div className="flex flex-col">
+                                      <span className="text-[9px] text-slate-600 font-black uppercase">Moves</span>
+                                      <span className="font-mono text-indigo-300">{item.moves}</span>
+                                   </div>
+                                   <div className="flex flex-col">
+                                      <span className="text-[9px] text-slate-600 font-black uppercase">Time</span>
+                                      <span className="font-mono text-indigo-300">{formatTime(item.time)}</span>
+                                   </div>
+                                 </div>
+                               </div>
+                               <Button 
+                                 variant="secondary" 
+                                 onClick={() => handleReplay(item)}
+                                 className="py-1 px-3 text-[10px] font-black uppercase tracking-widest h-8 bg-indigo-600/10 border-indigo-500/30 text-indigo-400 hover:bg-indigo-600 hover:text-white"
+                               >
+                                 Replay Puzzle
+                               </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+               </div>
             </div>
           </div>
         ) : (
