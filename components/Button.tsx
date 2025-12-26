@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { audioService } from '../services/audioService';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
@@ -12,6 +13,7 @@ export const Button: React.FC<ButtonProps> = ({
   isLoading, 
   className = '', 
   disabled,
+  onClick,
   ...props 
 }) => {
   const baseStyles = "px-6 py-2.5 rounded-xl font-semibold transition-all duration-200 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-95";
@@ -23,10 +25,16 @@ export const Button: React.FC<ButtonProps> = ({
     ghost: "bg-transparent hover:bg-white/10 text-slate-300"
   };
 
+  const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    audioService.playClick();
+    if (onClick) onClick(e);
+  };
+
   return (
     <button 
       className={`${baseStyles} ${variants[variant]} ${className}`}
       disabled={isLoading || disabled}
+      onClick={handleClick}
       {...props}
     >
       {isLoading ? (
