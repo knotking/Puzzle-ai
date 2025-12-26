@@ -1,25 +1,28 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
-const MODEL_NAME = 'gemini-2.5-flash-image';
+const IMAGE_MODEL = 'gemini-3-pro-image-preview';
+const TEXT_MODEL = 'gemini-3-pro-preview';
 
 export class GeminiService {
-  private ai: GoogleGenAI;
-
-  constructor() {
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  private getAI() {
+    // Directly use process.env.API_KEY as per guidelines.
+    // Assume this variable is pre-configured and valid.
+    return new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
   async generatePuzzleImage(prompt: string): Promise<string> {
+    const ai = this.getAI();
     try {
-      const response = await this.ai.models.generateContent({
-        model: MODEL_NAME,
+      const response = await ai.models.generateContent({
+        model: IMAGE_MODEL,
         contents: {
-          parts: [{ text: `Generate a high-quality, vibrant, and detailed square image suitable for a visual puzzle based on this prompt: ${prompt}. Ensure the image has clear features and textures.` }]
+          parts: [{ text: `Generate a breathtaking, ultra-detailed square masterpiece for a jigsaw puzzle. Subject: ${prompt}. Artistic, high-contrast, and vibrant.` }]
         },
         config: {
           imageConfig: {
-            aspectRatio: "1:1"
+            aspectRatio: "1:1",
+            imageSize: "1K"
           }
         }
       });
@@ -28,20 +31,55 @@ export class GeminiService {
       if (imagePart?.inlineData) {
         return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
       }
-      throw new Error("No image data received from Gemini.");
+      throw new Error("No image data received from Gemini 3.");
     } catch (error) {
       console.error("Gemini Generation Error:", error);
       throw error;
     }
   }
 
-  async editPuzzleImage(prompt: string, currentImageBase64: string): Promise<string> {
+  async generateQuiz(prompt: string): Promise<any[]> {
+    const ai = this.getAI();
     try {
-      // Remove data prefix if exists
+      const response = await ai.models.generateContent({
+        model: TEXT_MODEL,
+        contents: `Create a 3-question multiple choice quiz about the subject: "${prompt}". 
+        The questions should be interesting and educational. 
+        Format the output as a JSON array of objects with 'question', 'options' (array of 4 strings), 'correctIndex' (0-3), and 'explanation'.`,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                question: { type: Type.STRING },
+                options: { 
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING }
+                },
+                correctIndex: { type: Type.INTEGER },
+                explanation: { type: Type.STRING }
+              },
+              required: ["question", "options", "correctIndex", "explanation"]
+            }
+          }
+        }
+      });
+
+      return JSON.parse(response.text || '[]');
+    } catch (error) {
+      console.error("Quiz Generation Error:", error);
+      return [];
+    }
+  }
+
+  async editPuzzleImage(prompt: string, currentImageBase64: string): Promise<string> {
+    const ai = this.getAI();
+    try {
       const base64Data = currentImageBase64.split(',')[1] || currentImageBase64;
-      
-      const response = await this.ai.models.generateContent({
-        model: MODEL_NAME,
+      const response = await ai.models.generateContent({
+        model: IMAGE_MODEL,
         contents: {
           parts: [
             {
@@ -50,7 +88,7 @@ export class GeminiService {
                 mimeType: 'image/png'
               }
             },
-            { text: `Modify this image based on the following instructions: ${prompt}. Keep the core structure but apply the changes requested. Return the modified square image.` }
+            { text: `Modify this image: ${prompt}. Maintain the exact composition but change the visual style.` }
           ]
         },
         config: {
@@ -64,9 +102,9 @@ export class GeminiService {
       if (imagePart?.inlineData) {
         return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
       }
-      throw new Error("No image data received from Gemini editing.");
+      throw new Error("No image data received.");
     } catch (error) {
-      console.error("Gemini Editing Error:", error);
+      console.error("Editing Error:", error);
       throw error;
     }
   }

@@ -7,7 +7,14 @@ export interface PuzzleTile {
   backgroundPosition: string;
 }
 
-export type GameStatus = 'idle' | 'generating' | 'playing' | 'solved' | 'editing';
+export type GameStatus = 'idle' | 'generating' | 'playing' | 'solved' | 'editing' | 'quiz';
+
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+}
 
 export interface HistoryItem {
   id: string;
@@ -27,4 +34,5 @@ export interface GameState {
   difficulty: number; // grid size (e.g. 3 for 3x3)
   moves: number;
   moveHistory: { a: number; b: number }[];
+  quiz?: QuizQuestion[];
 }
