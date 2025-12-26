@@ -52,7 +52,7 @@ export const PuzzleBoard: React.FC<PuzzleBoardProps> = ({ tiles, difficulty, onS
 
   return (
     <div 
-      className="relative w-full max-w-md aspect-square bg-slate-950 rounded-2xl overflow-hidden shadow-2xl border-4 border-slate-700/50 p-1"
+      className="relative w-full max-w-4xl aspect-square bg-slate-950 rounded-2xl overflow-hidden shadow-2xl border-4 border-slate-700/50 p-1"
     >
       {tiles.map((tile) => {
         const row = Math.floor(tile.currentPos / difficulty);

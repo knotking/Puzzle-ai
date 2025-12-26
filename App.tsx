@@ -1,10 +1,22 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { geminiService } from './services/geminiService';
-import { GameState, PuzzleTile, GameStatus, HistoryItem } from './types';
+import { GameState, PuzzleTile, HistoryItem } from './types';
 import { Button } from './components/Button';
 import { PuzzleBoard } from './components/PuzzleBoard';
 import { Timer } from './components/Timer';
+import { audioService } from './services/audioService';
+
+const STYLES = [
+  { id: 'default', label: 'Default', icon: '🎨' },
+  { id: 'oil-painting', label: 'Oil Painting', icon: '🖼️' },
+  { id: 'cyberpunk', label: 'Cyberpunk', icon: '🌃' },
+  { id: 'anime', label: 'Anime', icon: '⛩️' },
+  { id: 'steampunk', label: 'Steampunk', icon: '⚙️' },
+  { id: 'pixel-art', label: 'Pixel Art', icon: '👾' },
+  { id: 'sketch', label: 'Pencil Sketch', icon: '✏️' },
+  { id: 'noir', label: 'Film Noir', icon: '🕵️' },
+];
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>({
@@ -14,20 +26,24 @@ const App: React.FC = () => {
     timer: 0,
     difficulty: 3,
     moves: 0,
+    moveHistory: [],
   });
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [prompt, setPrompt] = useState('');
-  const [editPrompt, setEditPrompt] = useState('');
+  const [selectedDifficulty, setSelectedDifficulty] = useState(3);
+  const [selectedStyle, setSelectedStyle] = useState('default');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRestyling, setIsRestyling] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const timerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load history on mount
   useEffect(() => {
-    const saved = localStorage.getItem('puzzle_history');
-    if (saved) {
+    const savedHistory = localStorage.getItem('puzzle_history');
+    if (savedHistory) {
       try {
-        setHistory(JSON.parse(saved));
+        setHistory(JSON.parse(savedHistory));
       } catch (e) {
         console.error("Failed to parse history");
       }
@@ -44,8 +60,8 @@ const App: React.FC = () => {
     for (let i = 0; i < dim * dim; i++) {
       const row = Math.floor(i / dim);
       const col = i % dim;
-      const xPercent = (col / (dim - 1)) * 100;
-      const yPercent = (row / (dim - 1)) * 100;
+      const xPercent = dim > 1 ? (col / (dim - 1)) * 100 : 0;
+      const yPercent = dim > 1 ? (row / (dim - 1)) * 100 : 0;
       
       tiles.push({
         id: i,
@@ -62,6 +78,11 @@ const App: React.FC = () => {
       [positions[i], positions[j]] = [positions[j], positions[i]];
     }
     
+    const isAlreadySolved = positions.every((p, idx) => p === idx);
+    if (isAlreadySolved && positions.length > 1) {
+      [positions[0], positions[1]] = [positions[1], positions[0]];
+    }
+    
     return tiles.map((tile, idx) => ({
       ...tile,
       currentPos: positions[idx]
@@ -72,86 +93,90 @@ const App: React.FC = () => {
     if (!prompt.trim()) return;
     setIsLoading(true);
     try {
-      const imageUrl = await geminiService.generatePuzzleImage(prompt);
-      const initialTiles = generateTiles(imageUrl, gameState.difficulty);
+      const styleLabel = STYLES.find(s => s.id === selectedStyle)?.label || '';
+      const finalPrompt = selectedStyle === 'default' ? prompt : `${prompt} in ${styleLabel} style`;
+      const imageUrl = await geminiService.generatePuzzleImage(finalPrompt);
+      const initialTiles = generateTiles(imageUrl, selectedDifficulty);
       
-      setGameState(prev => ({
-        ...prev,
+      setGameState({
         status: 'playing',
         image: imageUrl,
         tiles: initialTiles,
         timer: 0,
-        moves: 0
-      }));
+        difficulty: selectedDifficulty,
+        moves: 0,
+        moveHistory: [],
+      });
     } catch (error) {
-      alert("Failed to generate puzzle. Please try another prompt.");
+      alert("Failed to generate puzzle.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const transformStyle = async (styleId: string) => {
+    if (!gameState.image || isRestyling) return;
+    setIsRestyling(true);
+    try {
+      const styleLabel = STYLES.find(s => s.id === styleId)?.label || '';
+      const newImageUrl = await geminiService.editPuzzleImage(`Transform the existing image to have an ${styleLabel} style while keeping the same layout and subject matter.`, gameState.image);
+      
+      setGameState(prev => ({
+        ...prev,
+        image: newImageUrl,
+        tiles: prev.tiles.map(tile => ({
+          ...tile,
+          backgroundImage: newImageUrl
+        }))
+      }));
+      setSelectedStyle(styleId);
+      audioService.playClick();
+    } catch (error) {
+      console.error("Restyling error:", error);
+    } finally {
+      setIsRestyling(false);
+    }
+  };
 
+  const handleFileUpload = (file: File) => {
     if (!file.type.startsWith('image/')) {
-      alert('Please upload an image file.');
+      alert("Please upload an image file.");
       return;
     }
-
+    
     const reader = new FileReader();
     reader.onload = (e) => {
       const imageUrl = e.target?.result as string;
-      const initialTiles = generateTiles(imageUrl, gameState.difficulty);
+      const initialTiles = generateTiles(imageUrl, selectedDifficulty);
       
-      setPrompt('Uploaded Image');
-      setGameState(prev => ({
-        ...prev,
+      setGameState({
         status: 'playing',
         image: imageUrl,
         tiles: initialTiles,
         timer: 0,
-        moves: 0
-      }));
+        difficulty: selectedDifficulty,
+        moves: 0,
+        moveHistory: [],
+      });
+      setPrompt('Custom Uploaded Image');
     };
     reader.readAsDataURL(file);
   };
 
-  const replayPuzzle = (item: HistoryItem) => {
-    const newTiles = generateTiles(item.image, item.difficulty);
-    setGameState({
-      status: 'playing',
-      image: item.image,
-      tiles: newTiles,
-      timer: 0,
-      difficulty: item.difficulty,
-      moves: 0
-    });
-    setPrompt(item.prompt);
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
   };
 
-  const editGameImage = async (customPrompt?: string) => {
-    const finalPrompt = customPrompt || editPrompt;
-    if (!finalPrompt.trim() || !gameState.image) return;
-    setIsLoading(true);
-    try {
-      const editedUrl = await geminiService.editPuzzleImage(finalPrompt, gameState.image);
-      const newTiles = generateTiles(editedUrl, gameState.difficulty);
-      
-      setGameState(prev => ({
-        ...prev,
-        status: 'playing',
-        image: editedUrl,
-        tiles: newTiles,
-        timer: 0,
-        moves: 0
-      }));
-      setEditPrompt('');
-    } catch (error) {
-      alert("Failed to edit image. Try a different request.");
-    } finally {
-      setIsLoading(false);
-    }
+  const onDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
   };
 
   const handleSwap = (tileAId: number, tileBId: number) => {
@@ -173,26 +198,56 @@ const App: React.FC = () => {
       const isSolved = newTiles.every(tile => tile.id === tile.currentPos);
       
       if (isSolved) {
-        // Push to history
         const newItem: HistoryItem = {
           id: Date.now().toString(),
           image: prev.image!,
-          prompt: prompt || 'Custom Image',
+          prompt: prompt,
           difficulty: prev.difficulty,
           time: prev.timer,
           moves: prev.moves + 1,
           timestamp: Date.now(),
         };
-        setHistory(h => [newItem, ...h.slice(0, 19)]); // Keep last 20
+        setHistory(h => [newItem, ...h.slice(0, 19)]);
       }
 
       return {
         ...prev,
         tiles: newTiles,
         moves: prev.moves + 1,
+        moveHistory: [...prev.moveHistory, { a: tileAId, b: tileBId }],
         status: isSolved ? 'solved' : 'playing'
       };
     });
+  };
+
+  const handleUndo = () => {
+    if (gameState.moveHistory.length === 0 || gameState.status !== 'playing') return;
+
+    const lastMove = gameState.moveHistory[gameState.moveHistory.length - 1];
+    const { a, b } = lastMove;
+
+    setGameState(prev => {
+      const tileA = prev.tiles.find(t => t.id === a);
+      const tileB = prev.tiles.find(t => t.id === b);
+      if (!tileA || !tileB) return prev;
+
+      const posA = tileA.currentPos;
+      const posB = tileB.currentPos;
+
+      const newTiles = prev.tiles.map(tile => {
+        if (tile.id === a) return { ...tile, currentPos: posB };
+        if (tile.id === b) return { ...tile, currentPos: posA };
+        return tile;
+      });
+
+      return {
+        ...prev,
+        tiles: newTiles,
+        moves: prev.moves - 1,
+        moveHistory: prev.moveHistory.slice(0, -1),
+      };
+    });
+    audioService.playSwap();
   };
 
   useEffect(() => {
@@ -214,254 +269,237 @@ const App: React.FC = () => {
       image: null,
       tiles: [],
       timer: 0,
-      difficulty: 3,
+      difficulty: selectedDifficulty,
       moves: 0,
+      moveHistory: [],
     });
     setPrompt('');
+    setSelectedStyle('default');
   };
 
-  const stylePresets = [
-    { name: 'Sepia', prompt: 'Apply a sepia tone filter to give it a vintage classic feel' },
-    { name: 'Noir', prompt: 'Convert to high-contrast black and white noir style' },
-    { name: 'Oil Painting', prompt: 'Transform into a textured oil painting' },
-    { name: 'Cyberpunk', prompt: 'Add neon glows and cyberpunk aesthetic' },
+  const difficulties = [
+    { label: '3x3', value: 3, desc: 'Easy' },
+    { label: '4x4', value: 4, desc: 'Normal' },
+    { label: '5x5', value: 5, desc: 'Hard' }
   ];
 
-  const formatTime = (s: number) => {
-    const mins = Math.floor(s / 60);
-    const secs = s % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  const isSolved = gameState.status === 'solved';
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-8 flex flex-col items-center">
-      {/* Header */}
-      <header className="w-full max-w-4xl mb-12 flex flex-col md:flex-row items-center justify-between gap-6">
+    <div className="min-h-screen bg-slate-900 text-slate-100 p-8 flex flex-col items-center">
+      <header className="w-full max-w-7xl mb-12 flex flex-col md:flex-row justify-between items-center gap-6">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-500/40">
-            <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="bg-indigo-600 p-2 rounded-xl shadow-lg shadow-indigo-500/20">
+            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" />
             </svg>
           </div>
-          <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+          <h1 className="text-4xl font-black tracking-tighter bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent uppercase">
             PuzzleMe
           </h1>
         </div>
         
         {gameState.status !== 'idle' && (
-          <div className="flex items-center gap-4">
+          <div className="flex gap-4 items-center animate-in slide-in-from-top duration-500">
             <Timer seconds={gameState.timer} />
-            <div className="bg-slate-800/50 backdrop-blur px-4 py-2 rounded-lg border border-slate-700/50">
-               <span className="text-slate-400 text-sm uppercase font-bold mr-2">Moves</span>
-               <span className="text-xl font-mono text-cyan-400">{gameState.moves}</span>
+            <div className="bg-slate-800/80 px-5 py-2 rounded-xl border border-slate-700 shadow-xl backdrop-blur-sm">
+               <span className="text-slate-500 text-[10px] font-black uppercase mr-2 tracking-widest">Moves</span>
+               <span className="text-2xl font-mono text-indigo-300">{gameState.moves}</span>
             </div>
-            <Button variant="ghost" onClick={resetGame}>Reset</Button>
+            {gameState.status === 'playing' && gameState.moveHistory.length > 0 && (
+              <Button 
+                variant="secondary" 
+                onClick={handleUndo} 
+                className="px-4 py-2 text-xs font-black uppercase tracking-widest border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/10"
+              >
+                Undo
+              </Button>
+            )}
+            <Button variant="ghost" onClick={resetGame} className="text-slate-400 hover:text-white hover:bg-white/5">
+              Exit
+            </Button>
           </div>
         )}
       </header>
 
-      <main className="w-full max-w-4xl flex flex-col items-center gap-10">
+      <main className="w-full max-w-7xl flex flex-col items-center gap-10">
         {gameState.status === 'idle' ? (
-          <div className="w-full space-y-12">
-            <div className="max-w-xl mx-auto bg-slate-800/50 p-10 rounded-3xl border border-slate-700/50 shadow-2xl animate-in zoom-in duration-500">
-              <h2 className="text-2xl font-semibold mb-6 text-center">What should we puzzle today?</h2>
-              
-              <div className="space-y-6">
+          <div className="w-full max-w-xl bg-slate-800/50 p-10 rounded-[2.5rem] border border-slate-700/50 shadow-2xl backdrop-blur-md animate-in zoom-in-95 duration-500">
+            <h2 className="text-3xl font-black mb-8 text-center tracking-tight">Craft Your Vision</h2>
+            
+            <div className="space-y-8">
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Dream with AI</label>
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Describe an image... (e.g., 'A majestic phoenix rising from sapphire flames')"
-                  className="w-full h-32 bg-slate-900/80 border border-slate-700 rounded-2xl p-4 focus:ring-2 focus:ring-indigo-500 focus:outline-none text-lg resize-none placeholder:text-slate-600"
+                  placeholder="Describe an image to scramble..."
+                  className="w-full h-24 bg-slate-900/80 border border-slate-700 rounded-2xl p-5 focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none placeholder:text-slate-600 text-lg"
                 />
-                
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="flex flex-col">
-                    <label className="block text-sm font-bold text-slate-500 mb-2 uppercase">Difficulty</label>
-                    <select 
-                      value={gameState.difficulty}
-                      onChange={(e) => setGameState(prev => ({ ...prev, difficulty: Number(e.target.value) }))}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none h-12"
-                    >
-                      <option value={3}>3x3 (Easy)</option>
-                      <option value={4}>4x4 (Normal)</option>
-                      <option value={5}>5x5 (Hard)</option>
-                    </select>
-                  </div>
-                  
-                  <div className="flex flex-col justify-end">
-                    <Button 
-                      className="w-full h-12"
-                      onClick={startGame}
-                      isLoading={isLoading}
-                      disabled={!prompt.trim()}
-                    >
-                      Create AI Puzzle
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="relative py-4 flex items-center gap-4">
-                  <div className="flex-grow border-t border-slate-700/50"></div>
-                  <span className="text-slate-500 font-bold text-xs uppercase tracking-widest">Or</span>
-                  <div className="flex-grow border-t border-slate-700/50"></div>
-                </div>
-
-                <div className="flex flex-col items-center">
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    onChange={handleFileUpload} 
-                    accept="image/*" 
-                    className="hidden" 
-                  />
-                  <Button 
-                    variant="secondary" 
-                    className="w-full group py-4 border-dashed border-2 border-slate-700 hover:border-indigo-500/50 hover:bg-indigo-500/5"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <div className="flex flex-col items-center gap-1">
-                      <div className="flex items-center gap-2">
-                        <svg className="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                        </svg>
-                        <span>Upload Your Own Image</span>
-                      </div>
-                      <span className="text-[10px] text-slate-500 font-normal">Click to select or drag and drop</span>
-                    </div>
-                  </Button>
-                </div>
               </div>
-            </div>
 
-            {/* History Section / Vault */}
-            {history.length > 0 && (
-              <section className="animate-in slide-in-from-bottom duration-700">
-                <div className="flex items-center justify-between mb-6">
-                   <h3 className="text-xl font-bold text-slate-400 flex items-center gap-2">
-                     <svg className="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-7.714 2.143L11 21l-2.286-6.857L1 12l7.714-2.143L11 3z" />
-                     </svg>
-                     Puzzle Vault
-                   </h3>
-                   <button 
-                    onClick={() => { if(confirm("Clear history?")) setHistory([]) }}
-                    className="text-slate-600 hover:text-rose-400 text-sm transition-colors"
-                   >
-                     Clear All
-                   </button>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                  {history.map((item) => (
-                    <div 
-                      key={item.id}
-                      onClick={() => replayPuzzle(item)}
-                      className="group relative aspect-square rounded-2xl overflow-hidden bg-slate-800 border border-slate-700 cursor-pointer transition-all hover:scale-105 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/20"
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Choose Style</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {STYLES.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => setSelectedStyle(s.id)}
+                      className={`flex flex-col items-center py-2 px-1 rounded-xl border transition-all duration-200 ${
+                        selectedStyle === s.id
+                          ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
+                          : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-600'
+                      }`}
                     >
-                      <img src={item.image} alt={item.prompt} className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent opacity-80" />
-                      <div className="absolute bottom-0 left-0 right-0 p-3">
-                         <p className="text-[10px] text-white/60 font-medium truncate mb-1">{item.prompt}</p>
-                         <div className="flex justify-between items-center text-[10px] text-indigo-300 font-bold uppercase">
-                            <span>{item.difficulty}x{item.difficulty}</span>
-                            <span>{formatTime(item.time)}</span>
-                         </div>
-                      </div>
-                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-indigo-600/20 backdrop-blur-[1px]">
-                         <span className="bg-white text-slate-900 px-3 py-1 rounded-full text-xs font-black shadow-xl">REPLAY</span>
-                      </div>
-                    </div>
+                      <span className="text-xl mb-1">{s.icon}</span>
+                      <span className="text-[9px] font-black uppercase tracking-tighter truncate w-full text-center">
+                        {s.label}
+                      </span>
+                    </button>
                   ))}
                 </div>
-              </section>
-            )}
+              </div>
+
+              <div className="relative group">
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Or Upload Your Own</label>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  className="hidden" 
+                  accept="image/*"
+                  onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+                />
+                <div 
+                  onDragOver={onDragOver}
+                  onDragLeave={onDragLeave}
+                  onDrop={onDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`w-full py-6 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-all duration-300 group ${
+                    isDragging 
+                    ? 'border-indigo-400 bg-indigo-500/10 scale-[1.01]' 
+                    : 'border-slate-700 bg-slate-900/40 hover:border-slate-500 hover:bg-slate-900/60'
+                  }`}
+                >
+                  <p className="text-sm font-bold text-slate-400 group-hover:text-slate-200">
+                    {isDragging ? 'Drop Image Here' : 'Click or Drag Image to Upload'}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Select Grid Density</label>
+                <div className="grid grid-cols-3 gap-4">
+                  {difficulties.map((d) => (
+                    <button
+                      key={d.value}
+                      onClick={() => setSelectedDifficulty(d.value)}
+                      className={`flex flex-col items-center py-4 px-4 rounded-2xl border transition-all duration-300 ${
+                        selectedDifficulty === d.value
+                          ? 'bg-indigo-600 border-indigo-500 text-white shadow-xl shadow-indigo-600/30 -translate-y-1'
+                          : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:bg-slate-800'
+                      }`}
+                    >
+                      <span className="text-xl font-black">{d.label}</span>
+                      <span className={`text-[10px] uppercase font-black tracking-widest mt-1 ${selectedDifficulty === d.value ? 'text-indigo-200' : 'text-slate-600'}`}>
+                        {d.desc}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <Button 
+                className="w-full h-16 text-xl rounded-2xl font-black uppercase tracking-widest" 
+                onClick={startGame} 
+                isLoading={isLoading}
+                disabled={!prompt.trim()}
+              >
+                Assemble Puzzle
+              </Button>
+            </div>
           </div>
         ) : (
-          <div className="w-full flex flex-col lg:flex-row gap-10 items-start">
-            {/* Left: The Board */}
-            <div className="flex-1 flex flex-col items-center gap-6">
+          <div className="w-full flex flex-col lg:flex-row gap-16 items-center lg:items-start animate-in fade-in zoom-in-95 duration-700">
+            <div className="flex-1 flex flex-col items-center gap-6 w-full">
               <PuzzleBoard 
                 tiles={gameState.tiles}
                 difficulty={gameState.difficulty}
                 onSwap={handleSwap}
-                isSolved={gameState.status === 'solved'}
+                isSolved={isSolved}
               />
-              <p className="text-slate-500 text-sm text-center italic">
-                {gameState.status === 'solved' 
-                  ? "Great job! You reconstructed the AI's masterpiece."
-                  : "Click two pieces to swap them. Put the image back together!"}
-              </p>
+              <div className="px-6 py-2 bg-slate-800/40 rounded-full border border-slate-700/30 backdrop-blur-sm">
+                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-400">
+                  {gameState.difficulty}x{gameState.difficulty} &bull; {gameState.difficulty * gameState.difficulty} Pieces
+                </p>
+              </div>
             </div>
-
-            {/* Right: AI Tools */}
-            <div className="w-full lg:w-80 space-y-6">
-              <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700/50 shadow-xl">
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                  Edit with AI
-                </h3>
-                
-                {/* Style Presets */}
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {stylePresets.map((style) => (
-                    <button
-                      key={style.name}
-                      onClick={() => editGameImage(style.prompt)}
-                      disabled={isLoading || gameState.status === 'solved'}
-                      className="px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-indigo-500/50 rounded-lg text-xs font-medium text-slate-400 hover:text-indigo-300 transition-all disabled:opacity-50"
-                    >
-                      {style.name}
-                    </button>
-                  ))}
+            
+            <div className="w-full lg:w-[380px] space-y-8 flex-shrink-0">
+              <div className="bg-slate-800/50 p-8 rounded-[2rem] border border-slate-700/50 shadow-2xl backdrop-blur-sm">
+                <h4 className="text-slate-500 font-black text-[10px] uppercase tracking-[0.2em] mb-5">Reference & Styles</h4>
+                <div className="relative group overflow-hidden rounded-2xl border-2 border-slate-700/50 shadow-inner mb-6">
+                  <img src={gameState.image!} className="w-full aspect-square object-cover transition-all duration-1000 group-hover:scale-110" alt="target" />
+                  <div className="absolute inset-0 bg-slate-900/40 group-hover:bg-transparent transition-colors duration-500" />
+                  {isRestyling && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
+                      <div className="flex flex-col items-center">
+                        <svg className="animate-spin h-8 w-8 text-indigo-500 mb-2" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-indigo-300">Restyling...</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <textarea
-                  value={editPrompt}
-                  onChange={(e) => setEditPrompt(e.target.value)}
-                  placeholder="Or describe a custom change..."
-                  className="w-full h-24 bg-slate-900 border border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none mb-4 placeholder:text-slate-600"
-                />
-                <Button 
-                  variant="secondary" 
-                  className="w-full text-sm"
-                  onClick={() => editGameImage()}
-                  isLoading={isLoading}
-                  disabled={!editPrompt.trim() || gameState.status === 'solved'}
-                >
-                  Apply Custom Magic
-                </Button>
+                {!isSolved && !isRestyling && (
+                  <div className="space-y-3">
+                    <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-600 mb-2">Transform Visual Style</p>
+                    <div className="grid grid-cols-4 gap-2">
+                      {STYLES.map((s) => (
+                        <button
+                          key={s.id}
+                          onClick={() => transformStyle(s.id)}
+                          className={`p-2 rounded-lg border border-slate-700 hover:border-indigo-500 transition-all duration-200 bg-slate-900/50 text-xl flex items-center justify-center`}
+                          title={s.label}
+                        >
+                          {s.icon}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                <div className="mt-6">
+                  <p className="text-xs text-slate-300 leading-relaxed font-bold italic opacity-60">"{prompt}"</p>
+                </div>
               </div>
-
-              {gameState.status === 'solved' && (
-                <div className="bg-green-500/10 p-6 rounded-2xl border border-green-500/20 animate-in slide-in-from-bottom duration-500">
-                  <h4 className="text-green-400 font-bold mb-2">Challenge Complete!</h4>
-                  <p className="text-sm text-green-300/80 mb-4">
-                    Time: {formatTime(gameState.timer)}<br/>
-                    Moves: {gameState.moves}
-                  </p>
-                  <Button variant="primary" className="w-full" onClick={resetGame}>
-                    Play Again
+              
+              {isSolved && (
+                <div className="bg-indigo-600 p-8 rounded-[2rem] border border-indigo-400/30 text-center shadow-[0_20px_60px_rgba(79,70,229,0.4)] animate-in slide-in-from-bottom duration-500">
+                  <p className="text-white font-black text-3xl mb-3 tracking-tighter">VICTORY!</p>
+                  <p className="text-indigo-100 text-sm mb-8 font-bold leading-snug">The vision has been restored in {gameState.moves} surgical moves.</p>
+                  <Button variant="secondary" className="w-full bg-white text-indigo-600 hover:bg-indigo-50 border-none h-14 rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl" onClick={resetGame}>
+                    Start New Quest
                   </Button>
                 </div>
               )}
 
-              <div className="bg-indigo-500/5 p-6 rounded-2xl border border-indigo-500/10">
-                 <h4 className="text-indigo-300 font-bold mb-2">Hint</h4>
-                 <div className="relative aspect-square w-full rounded-lg overflow-hidden border border-slate-700 opacity-60 hover:opacity-100 transition-opacity">
-                    <img src={gameState.image!} alt="Target" className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent flex items-end p-2">
-                       <span className="text-[10px] text-slate-300 font-bold uppercase">Original Image</span>
-                    </div>
-                 </div>
-              </div>
+              {!isSolved && (
+                <div className="text-center space-y-2 opacity-40">
+                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">
+                    Swap tiles to align pixels
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
       </main>
-
-      <footer className="mt-auto py-10 text-slate-600 text-xs text-center">
-         Powered by Gemini 2.5 Flash Image &bull; Made for Puzzle Lovers
+      
+      <footer className="mt-auto py-10 text-slate-700 text-[9px] font-black uppercase tracking-[0.4em] border-t border-slate-800/50 w-full text-center">
+        Powered by Gemini 2.5 Flash &bull; Visual Synthesis &bull; PuzzleMe
       </footer>
     </div>
   );

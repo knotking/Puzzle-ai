@@ -26,4 +26,5 @@ export interface GameState {
   timer: number;
   difficulty: number; // grid size (e.g. 3 for 3x3)
   moves: number;
+  moveHistory: { a: number; b: number }[];
 }
