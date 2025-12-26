@@ -1,0 +1,5 @@
+{
+  "name": "PuzzleMe AI",
+  "description": "An AI-powered puzzle generator where prompts turn into interactive visual challenges. Generate images with Gemini, edit them with text, and solve the scrambled results against the clock.",
+  "requestFramePermissions": []
+}
